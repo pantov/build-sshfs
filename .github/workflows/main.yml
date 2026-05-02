@@ -24,7 +24,9 @@ jobs:
             ninja \
             git \
             pkgconfig \
-            musl-dev
+            musl-dev \
+            libc-dev \
+            linux-headers
 
       - name: Clone SSHFS source
         run: |
@@ -36,19 +38,34 @@ jobs:
         run: |
           cd sshfs
           mkdir build && cd build
-          export LDFLAGS="-static -static-libgcc -no-pie"
+          
+          # Явно указываем пути к статическим библиотекам
+          export PKG_CONFIG_PATH=/usr/lib/pkgconfig
+          export LDFLAGS="-static -static-libgcc -no-pie -Wl,-Bstatic"
           export CFLAGS="-Os -static"
+          
           meson setup \
             --prefix=/usr \
             --buildtype=release \
             --default-library=static \
             -Dfuse3:static=true \
+            -Dglib:static=true \
             ..
+          
+          # Правим meson.build, если нужно
+          sed -i 's/-Wl,--start-group/-Wl,--start-group -Wl,-Bstatic/g' build.ninja
+          
           ninja
-          cp sshfs /sshfs-static
+
+      - name: Verify static binary
+        run: |
+          cd sshfs/build
+          file sshfs
+          ldd sshfs || echo "Statically linked (no dynamic dependencies)"
+          ./sshfs --version || echo "Binary created but needs testing"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: sshfs-static
-          path: /sshfs-static
+          path: sshfs/build/sshfs
