@@ -1,0 +1,54 @@
+name: Build Static SSHFS
+
+on:
+  push:
+    paths:
+      - '.github/workflows/build-sshfs.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: alpine:latest
+    
+    steps:
+      - name: Install build dependencies
+        run: |
+          apk add --no-cache \
+            alpine-sdk \
+            fuse3-dev \
+            fuse3-static \
+            glib-dev \
+            glib-static \
+            meson \
+            ninja \
+            git \
+            pkgconfig \
+            musl-dev
+
+      - name: Clone SSHFS source
+        run: |
+          git clone https://github.com/libfuse/sshfs.git
+          cd sshfs
+          git checkout sshfs-3.7.5
+
+      - name: Build static binary
+        run: |
+          cd sshfs
+          mkdir build && cd build
+          export LDFLAGS="-static -static-libgcc -no-pie"
+          export CFLAGS="-Os -static"
+          meson setup \
+            --prefix=/usr \
+            --buildtype=release \
+            --default-library=static \
+            -Dfuse3:static=true \
+            ..
+          ninja
+          cp sshfs /sshfs-static
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshfs-static
+          path: /sshfs-static
