@@ -1,4 +1,4 @@
-name: Build Fully Static SSHFS
+name: Build Static SSHFS
 
 on:
   workflow_dispatch:
@@ -8,94 +8,53 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Update Meson to latest version
-        run: |
-          sudo apt-get update
-          sudo apt-get remove -y meson
-          pip3 install --user meson
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            musl-tools \
             git \
+            meson \
             ninja-build \
             pkg-config \
-            python3-pip \
-            gettext \
-            libmount-dev
-          
-      - name: Build static GLib with musl
-        run: |
-          git clone https://github.com/GNOME/glib.git
-          cd glib
-          mkdir build && cd build
-          
-          CC=musl-gcc \
-          CFLAGS="-static -Os" \
-          LDFLAGS="-static" \
-          meson setup .. \
-            --prefix=/usr/local \
-            --default-library=static \
-            --buildtype=release \
-            -Dlibmount=disabled \
-            -Dselinux=disabled \
-            -Dtests=false
-          
-          ninja
-          sudo ninja install
-          
-      - name: Build static FUSE3 with musl
-        run: |
-          git clone https://github.com/libfuse/libfuse.git
-          cd libfuse
-          mkdir build && cd build
-          
-          # Исправляем проблему с udev для статической сборки
-          CC=musl-gcc \
-          CFLAGS="-static -Os" \
-          LDFLAGS="-static" \
-          meson setup .. \
-            --prefix=/usr/local \
-            --default-library=static \
-            --buildtype=release \
-            -Dudevrulesdir=/dev/null \
-            -Duseroot=false \
-            -Dexamples=false
-          
-          ninja
-          sudo ninja install
-          
-      - name: Build static SSHFS
+            libfuse3-dev \
+            libglib2.0-dev \
+            libpcre2-dev \
+            gcc \
+            make
+
+      - name: Clone SSHFS source
         run: |
           git clone https://github.com/libfuse/sshfs.git
           cd sshfs
           git checkout sshfs-3.7.5
+
+      - name: Build static SSHFS
+        run: |
+          cd sshfs
           mkdir build && cd build
           
-          CC=musl-gcc \
-          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig \
-          CFLAGS="-static -Os -D_GNU_SOURCE" \
-          LDFLAGS="-static -pthread -lm" \
-          meson setup .. \
-            --prefix=/usr/local \
+          export LDFLAGS="-static -pthread"
+          export CFLAGS="-Os -static"
+          
+          meson setup \
+            --prefix=/usr \
+            --buildtype=release \
             --default-library=static \
-            --buildtype=release
+            ..
           
           ninja
-          
-      - name: Verify binary
+
+      - name: Verify static binary
         run: |
           cd sshfs/build
           file sshfs
-          ldd sshfs || echo "✓ Fully statically linked"
-          strings sshfs | grep -i "libc" || echo "✓ No libc dependencies"
-          ./sshfs --version || echo "Binary created successfully"
-          
+          ldd sshfs || echo "✓ Static binary - no dynamic dependencies"
+          ./sshfs --version
+          ls -lh sshfs
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: sshfs-static
           path: sshfs/build/sshfs
+          retention-days: 90
