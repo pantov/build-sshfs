@@ -1,71 +1,58 @@
-name: Build Static SSHFS
+name: Build Fully Static SSHFS
 
 on:
-  push:
-    paths:
-      - '.github/workflows/build-sshfs.yml'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: alpine:latest
     
     steps:
-      - name: Install build dependencies
+      - name: Build using musl-cross
         run: |
-          apk add --no-cache \
-            alpine-sdk \
-            fuse3-dev \
-            fuse3-static \
-            glib-dev \
-            glib-static \
-            meson \
-            ninja \
-            git \
-            pkgconfig \
-            musl-dev \
-            libc-dev \
-            linux-headers
-
-      - name: Clone SSHFS source
-        run: |
+          # Устанавливаем musl-gcc
+          sudo apt-get update
+          sudo apt-get install -y musl-tools git meson ninja-build pkg-config
+          
+          # Скачиваем и собираем статический glib
+          git clone https://github.com/GNOME/glib.git
+          cd glib
+          meson setup build --prefix=/usr/local --default-library=static
+          ninja -C build
+          sudo ninja -C build install
+          cd ..
+          
+          # Скачиваем и собираем статический fuse3
+          git clone https://github.com/libfuse/libfuse.git
+          cd libfuse
+          meson setup build --prefix=/usr/local --default-library=static
+          ninja -C build
+          sudo ninja -C build install
+          cd ..
+          
+          # Собираем sshfs статически
           git clone https://github.com/libfuse/sshfs.git
           cd sshfs
           git checkout sshfs-3.7.5
-
-      - name: Build static binary
-        run: |
-          cd sshfs
           mkdir build && cd build
           
-          # Явно указываем пути к статическим библиотекам
-          export PKG_CONFIG_PATH=/usr/lib/pkgconfig
-          export LDFLAGS="-static -static-libgcc -no-pie -Wl,-Bstatic"
-          export CFLAGS="-Os -static"
-          
-          meson setup \
-            --prefix=/usr \
-            --buildtype=release \
+          CC=musl-gcc \
+          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig \
+          LDFLAGS="-static -pthread" \
+          CFLAGS="-Os -static" \
+          meson setup .. \
+            --prefix=/usr/local \
             --default-library=static \
-            -Dfuse3:static=true \
-            -Dglib:static=true \
-            ..
-          
-          # Правим meson.build, если нужно
-          sed -i 's/-Wl,--start-group/-Wl,--start-group -Wl,-Bstatic/g' build.ninja
+            --buildtype=release
           
           ninja
-
-      - name: Verify static binary
-        run: |
-          cd sshfs/build
+          
+          # Проверяем
           file sshfs
-          ldd sshfs || echo "Statically linked (no dynamic dependencies)"
-          ./sshfs --version || echo "Binary created but needs testing"
-
-      - name: Upload artifact
+          ldd sshfs || echo "Fully static"
+          
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: sshfs-static
+          name: sshfs-static-musl
           path: sshfs/build/sshfs
