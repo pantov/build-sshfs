@@ -1,79 +1,42 @@
-name: Build Static SSHFS with Docker
+FROM alpine:latest AS builder
 
-on:
-  workflow_dispatch:
+# Устанавливаем все необходимые пакеты, включая статические библиотеки PCRE2
+RUN apk add --no-cache \
+    alpine-sdk \
+    fuse3-dev \
+    fuse3-static \
+    glib-dev \
+    glib-static \
+    meson \
+    ninja \
+    git \
+    pkgconfig \
+    musl-dev \
+    linux-headers \
+    pcre2-dev \
+    pcre2-static
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Create Dockerfile
-        run: |
-          cat > Dockerfile << 'EOF'
-          FROM alpine:latest AS builder
-          
-          # Устанавливаем все необходимые пакеты для сборки
-          RUN apk add --no-cache \
-              alpine-sdk \
-              fuse3-dev \
-              fuse3-static \
-              glib-dev \
-              glib-static \
-              meson \
-              ninja \
-              git \
-              pkgconfig \
-              musl-dev \
-              linux-headers \
-              libc-dev
-          
-          # Клонируем и собираем SSHFS
-          RUN git clone https://github.com/libfuse/sshfs.git /tmp/sshfs && \
-              cd /tmp/sshfs && \
-              git checkout sshfs-3.7.5 && \
-              mkdir build && cd build && \
-              LDFLAGS="-static -static-libgcc -no-pie" \
-              CFLAGS="-Os -static" \
-              meson setup \
-                  --prefix=/usr \
-                  --buildtype=release \
-                  --default-library=static \
-                  .. && \
-              ninja && \
-              # Проверяем, что бинарник статический
-              file sshfs | grep -q "statically linked" && \
-              echo "✓ Бинарник статический"
-          
-          # Создаем минимальный образ только с бинарником
-          FROM scratch
-          COPY --from=builder /tmp/sshfs/build/sshfs /sshfs
-          ENTRYPOINT ["/sshfs"]
-          EOF
-      
-      - name: Build Docker image
-        run: |
-          docker build -t sshfs-static .
-      
-      - name: Extract binary from Docker image
-        run: |
-          docker create --name sshfs-tmp sshfs-static
-          docker cp sshfs-tmp:/sshfs ./sshfs-static
-          docker rm sshfs-tmp
-      
-      - name: Verify static binary
-        run: |
-          file ./sshfs-static
-          ldd ./sshfs-static || echo "✓ Статическая сборка - нет динамических зависимостей"
-          ./sshfs-static --version
-          ls -lh ./sshfs-static
-      
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sshfs-static
-          path: ./sshfs-static
-          retention-days: 90
+# Клонируем и собираем SSHFS
+RUN git clone https://github.com/libfuse/sshfs.git /tmp/sshfs && \
+    cd /tmp/sshfs && \
+    git checkout sshfs-3.7.5 && \
+    mkdir build && cd build && \
+    # Явно указываем pkg-config путь к статическим библиотекам
+    export PKG_CONFIG_PATH=/usr/lib/pkgconfig && \
+    LDFLAGS="-static -static-libgcc -no-pie" \
+    CFLAGS="-Os -static -I/usr/include/pcre2" \
+    meson setup \
+        --prefix=/usr \
+        --buildtype=release \
+        --default-library=static \
+        -Dpcre2:static=true \
+        .. && \
+    ninja && \
+    # Проверка, что бинарник статический
+    file sshfs | grep -q "statically linked" && \
+    echo "✓ Бинарник статически слинкован"
+
+# Финальный этап: копируем только бинарник
+FROM scratch
+COPY --from=builder /tmp/sshfs/build/sshfs /sshfs
+ENTRYPOINT ["/sshfs"]
